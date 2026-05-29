@@ -482,13 +482,17 @@ async def upload_image(file: UploadFile = File(...), user=Depends(verify_token))
 ENV_PATH = "/app/data/.env.runtime"
 SETTINGS_KEYS = ["child_name", "parent_password", "telegram_bot_token", "telegram_chat_id"]
 
+# In-memory cache for token (survives between requests in same process)
+_token_cache: dict = {}
+
 def _read_settings() -> dict:
     result = {
         "child_name":         os.getenv("CHILD_NAME", ""),
         "parent_password":    "",
-        "telegram_bot_token": "",
+        "telegram_bot_token": os.getenv("TELEGRAM_BOT_TOKEN", ""),
         "telegram_chat_id":   os.getenv("TELEGRAM_CHAT_ID", ""),
     }
+    # Override with runtime file if exists
     if os.path.exists(ENV_PATH):
         with open(ENV_PATH) as f:
             for line in f:
@@ -498,13 +502,22 @@ def _read_settings() -> dict:
                     k2 = k.strip().lower()
                     if k2 in SETTINGS_KEYS:
                         result[k2] = v.strip()
+    # Override with in-memory cache (most recent save)
+    for k, v in _token_cache.items():
+        if v:
+            result[k] = v
     return result
 
 def _write_settings(data: dict):
     os.makedirs(os.path.dirname(ENV_PATH), exist_ok=True)
-    lines = [f"{k.upper()}={data.get(k,'')}\n" for k in SETTINGS_KEYS]
     with open(ENV_PATH, "w") as f:
-        f.writelines(lines)
+        for k in SETTINGS_KEYS:
+            v = data.get(k, "")
+            f.write(f"{k.upper()}={v}\n")
+    # Update in-memory cache immediately
+    for k in SETTINGS_KEYS:
+        if data.get(k):
+            _token_cache[k] = data[k]
 
 class SettingsModel(BaseModel):
     child_name: str = ""
@@ -516,7 +529,8 @@ class SettingsModel(BaseModel):
 def get_settings(user=Depends(verify_token)):
     if user["role"] != "parent": raise HTTPException(403)
     s = _read_settings()
-    s["telegram_bot_token"] = "***" if s.get("telegram_bot_token") else ""
+    # Mask token for display but keep chat_id visible
+    s["telegram_bot_token"] = "***SAVED***" if s.get("telegram_bot_token") else ""
     return s
 
 @app.post("/api/settings")
@@ -524,29 +538,47 @@ def save_settings(s: SettingsModel, user=Depends(verify_token)):
     if user["role"] != "parent": raise HTTPException(403)
     current = _read_settings()
     data = s.dict()
-    if data["telegram_bot_token"] == "***":
-        data["telegram_bot_token"] = current.get("telegram_bot_token", "")
-    if data["parent_password"]:
+    # Don't overwrite token if user didn't change it (masked value)
+    if data["telegram_bot_token"] in ("***SAVED***", "***", ""):
+        if not data["telegram_bot_token"]:
+            data["telegram_bot_token"] = ""
+        else:
+            data["telegram_bot_token"] = current.get("telegram_bot_token", "")
+    # Apply in-memory immediately (no restart needed)
+    if data.get("parent_password"):
         global PARENT_PWD
         PARENT_PWD = data["parent_password"]
-    if data["child_name"]:
+    if data.get("child_name"):
         global CHILD_NAME
         CHILD_NAME = data["child_name"]
     _write_settings(data)
-    return {"ok": True}
+    return {"ok": True, "message": "Настройки сохранены"}
 
 @app.post("/api/settings/test-telegram")
 async def test_telegram(user=Depends(verify_token)):
     if user["role"] != "parent": raise HTTPException(403)
     s = _read_settings()
-    token   = s.get("telegram_bot_token", "")
-    chat_id = s.get("telegram_chat_id", "")
-    if not token or not chat_id:
-        raise HTTPException(400, "Telegram token or chat_id not configured")
+    token   = s.get("telegram_bot_token", "").strip()
+    chat_id = s.get("telegram_chat_id", "").strip()
+    if not token:
+        raise HTTPException(400, detail="Bot Token не заполнен. Сохрани настройки сначала.")
+    if not chat_id:
+        raise HTTPException(400, detail="Chat ID не заполнен.")
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    async with httpx.AsyncClient() as c:
-        r = await c.post(url, json={"chat_id": chat_id,
-            "text": "Swim Trainer подключён! Бот работает."})
-    if r.status_code != 200:
-        raise HTTPException(400, f"Telegram error: {r.text}")
-    return {"ok": True}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            r = await c.post(url, json={
+                "chat_id": chat_id,
+                "text": "🏊 Swim Trainer подключён!\nБот работает. Можно тренироваться 💪",
+                "parse_mode": "HTML"
+            })
+        if r.status_code == 200:
+            return {"ok": True, "message": "Сообщение отправлено!"}
+        else:
+            err = r.json()
+            description = err.get("description", r.text)
+            raise HTTPException(400, detail=f"Telegram: {description}")
+    except httpx.TimeoutException:
+        raise HTTPException(400, detail="Telegram не отвечает (timeout). Проверь токен.")
+    except httpx.RequestError as e:
+        raise HTTPException(400, detail=f"Сетевая ошибка: {str(e)}")
