@@ -51,7 +51,15 @@ export const api = {
   saveSettings:   s   => req('POST', '/settings', s),
   testTelegram:   ()  => req('POST', '/settings/test-telegram'),
 
-  sendExercise: id => req('POST', `/exercises/${id}/send-telegram`),
+  sendExercise:   id => req('POST', `/exercises/${id}/send-telegram`),
+  uploadExerciseImage: async (id, file, type='demo') => {
+    const fd = new FormData()
+    fd.append('file', file)
+    const r = await fetch(`/api/exercises/${id}/upload-image?image_type=${type}`,
+      { method: 'POST', headers: _token ? { Authorization: `Bearer ${_token}` } : {}, body: fd })
+    if (!r.ok) throw new Error('Upload failed')
+    return r.json()
+  },
 
   upload: async (file) => {
     const fd = new FormData(); fd.append('file', file)
