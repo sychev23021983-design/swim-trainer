@@ -477,3 +477,76 @@ async def upload_image(file: UploadFile = File(...), user=Depends(verify_token))
     async with aiofiles.open(fpath, "wb") as f:
         await f.write(await file.read())
     return {"url": f"/uploads/{fname}"}
+
+# ---------- Settings ----------
+ENV_PATH = "/app/data/.env.runtime"
+SETTINGS_KEYS = ["child_name", "parent_password", "telegram_bot_token", "telegram_chat_id"]
+
+def _read_settings() -> dict:
+    result = {
+        "child_name":         os.getenv("CHILD_NAME", ""),
+        "parent_password":    "",
+        "telegram_bot_token": "",
+        "telegram_chat_id":   os.getenv("TELEGRAM_CHAT_ID", ""),
+    }
+    if os.path.exists(ENV_PATH):
+        with open(ENV_PATH) as f:
+            for line in f:
+                line = line.strip()
+                if "=" in line and not line.startswith("#"):
+                    k, _, v = line.partition("=")
+                    k2 = k.strip().lower()
+                    if k2 in SETTINGS_KEYS:
+                        result[k2] = v.strip()
+    return result
+
+def _write_settings(data: dict):
+    os.makedirs(os.path.dirname(ENV_PATH), exist_ok=True)
+    lines = [f"{k.upper()}={data.get(k,'')}\n" for k in SETTINGS_KEYS]
+    with open(ENV_PATH, "w") as f:
+        f.writelines(lines)
+
+class SettingsModel(BaseModel):
+    child_name: str = ""
+    parent_password: str = ""
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+
+@app.get("/api/settings")
+def get_settings(user=Depends(verify_token)):
+    if user["role"] != "parent": raise HTTPException(403)
+    s = _read_settings()
+    s["telegram_bot_token"] = "***" if s.get("telegram_bot_token") else ""
+    return s
+
+@app.post("/api/settings")
+def save_settings(s: SettingsModel, user=Depends(verify_token)):
+    if user["role"] != "parent": raise HTTPException(403)
+    current = _read_settings()
+    data = s.dict()
+    if data["telegram_bot_token"] == "***":
+        data["telegram_bot_token"] = current.get("telegram_bot_token", "")
+    if data["parent_password"]:
+        global PARENT_PWD
+        PARENT_PWD = data["parent_password"]
+    if data["child_name"]:
+        global CHILD_NAME
+        CHILD_NAME = data["child_name"]
+    _write_settings(data)
+    return {"ok": True}
+
+@app.post("/api/settings/test-telegram")
+async def test_telegram(user=Depends(verify_token)):
+    if user["role"] != "parent": raise HTTPException(403)
+    s = _read_settings()
+    token   = s.get("telegram_bot_token", "")
+    chat_id = s.get("telegram_chat_id", "")
+    if not token or not chat_id:
+        raise HTTPException(400, "Telegram token or chat_id not configured")
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    async with httpx.AsyncClient() as c:
+        r = await c.post(url, json={"chat_id": chat_id,
+            "text": "Swim Trainer подключён! Бот работает."})
+    if r.status_code != 200:
+        raise HTTPException(400, f"Telegram error: {r.text}")
+    return {"ok": True}
