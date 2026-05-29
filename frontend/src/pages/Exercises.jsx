@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { api } from '../api.js'
 
 const CATS = [
@@ -29,6 +29,8 @@ export default function Exercises() {
   const [saving, setSaving]       = useState(false)
   const [sending, setSending]     = useState({})
   const [sendMsg, setSendMsg]     = useState({})
+  const [uploading, setUploading] = useState({})
+  const fileRefs = useRef({})
 
   const load = async () => {
     setLoading(true)
@@ -52,19 +54,20 @@ export default function Exercises() {
       const payload = { ...form,
         reps:         form.reps         ? parseInt(form.reps)         : null,
         duration_sec: form.duration_sec ? parseInt(form.duration_sec) : null,
-        sets:         parseInt(form.sets),
-        rest_sec:     parseInt(form.rest_sec),
-        difficulty:   parseInt(form.difficulty),
-        reward_usd:   parseFloat(form.reward_usd),
-        muscles_primary:    typeof form.muscles_primary    === 'string' ? form.muscles_primary.split(',').map(s=>s.trim()).filter(Boolean)    : form.muscles_primary,
-        muscles_secondary:  typeof form.muscles_secondary  === 'string' ? form.muscles_secondary.split(',').map(s=>s.trim()).filter(Boolean)  : form.muscles_secondary,
-        muscles_stabilizer: typeof form.muscles_stabilizer === 'string' ? form.muscles_stabilizer.split(',').map(s=>s.trim()).filter(Boolean) : form.muscles_stabilizer,
+        sets:         parseInt(form.sets), rest_sec: parseInt(form.rest_sec),
+        difficulty:   parseInt(form.difficulty), reward_usd: parseFloat(form.reward_usd),
+        muscles_primary:    arr(form.muscles_primary),
+        muscles_secondary:  arr(form.muscles_secondary),
+        muscles_stabilizer: arr(form.muscles_stabilizer),
       }
       if (modal === 'new') await api.createExercise(payload)
       else await api.updateExercise(form.id, payload)
       setModal(null); await load()
     } finally { setSaving(false) }
   }
+
+  const arr = v => typeof v === 'string'
+    ? v.split(',').map(s => s.trim()).filter(Boolean) : v
 
   const del = async (id) => {
     if (!confirm('Удалить упражнение?')) return
@@ -81,9 +84,19 @@ export default function Exercises() {
       setTimeout(() => setSending(p => ({...p, [id]: null})), 3000)
     } catch(e) {
       setSending(p => ({...p, [id]: 'err'}))
-      setSendMsg(p => ({...p, [id]: e.message || 'Ошибка отправки'}))
+      setSendMsg(p => ({...p, [id]: e.message || 'Ошибка'}))
       setTimeout(() => setSending(p => ({...p, [id]: null})), 4000)
     }
+  }
+
+  const handleImageUpload = async (exId, file, type = 'demo') => {
+    setUploading(p => ({...p, [exId]: true}))
+    try {
+      await api.uploadExerciseImage(exId, file, type)
+      await load()
+    } catch(e) {
+      alert('Ошибка загрузки: ' + e.message)
+    } finally { setUploading(p => ({...p, [exId]: false})) }
   }
 
   const f   = (k, v) => setForm(p => ({...p, [k]: v}))
@@ -124,70 +137,105 @@ export default function Exercises() {
           {exercises.map(ex => {
             const color = CAT_COLORS[ex.category] || '#888'
             const st    = sending[ex.id]
+            const hasImg = !!(ex.image_demo || ex.image_muscle)
             return (
               <div key={ex.id} style={{ background:'#fff', border:'1px solid var(--border)',
-                borderRadius:12, padding:'1rem 1.25rem', borderLeft:`4px solid ${color}`,
+                borderRadius:12, overflow:'hidden', borderLeft:`4px solid ${color}`,
                 opacity: ex.active ? 1 : 0.55 }}>
-                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:8 }}>
-                  <div style={{ flex:1 }}>
-                    <div style={{ display:'flex', gap:6, marginBottom:5, flexWrap:'wrap' }}>
-                      <span style={{ fontSize:11, padding:'2px 8px', borderRadius:5,
-                        background: color+'18', color, fontWeight:600 }}>
-                        {CATS.find(c => c.value === ex.category)?.label || ex.category}
-                      </span>
-                      <span style={{ fontSize:11, padding:'2px 8px', borderRadius:5,
-                        background:'var(--bg)', color:'var(--muted)', border:'1px solid var(--border)' }}>
-                        {ex.sub_category}
-                      </span>
-                      {!ex.active && (
+
+                {/* Image preview if exists */}
+                {hasImg && (
+                  <div style={{ position:'relative', maxHeight:180, overflow:'hidden',
+                    background:'#0d1117', display:'flex', alignItems:'center', justifyContent:'center' }}>
+                    <img src={ex.image_demo || ex.image_muscle} alt={ex.title}
+                      style={{ width:'100%', maxHeight:180, objectFit:'cover', display:'block' }}
+                      onError={e => e.target.style.display='none'} />
+                    <button
+                      onClick={() => fileRefs.current[ex.id]?.click()}
+                      style={{ position:'absolute', top:8, right:8, padding:'4px 10px',
+                        background:'rgba(0,0,0,0.6)', color:'#fff', border:'none',
+                        borderRadius:6, fontSize:11, cursor:'pointer' }}>
+                      🖼 Заменить
+                    </button>
+                  </div>
+                )}
+
+                <div style={{ padding:'1rem 1.25rem' }}>
+                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:8 }}>
+                    <div style={{ flex:1 }}>
+                      <div style={{ display:'flex', gap:6, marginBottom:5, flexWrap:'wrap', alignItems:'center' }}>
                         <span style={{ fontSize:11, padding:'2px 8px', borderRadius:5,
-                          background:'#fee2e2', color:'var(--danger)' }}>неактивно</span>
+                          background: color+'18', color, fontWeight:600 }}>
+                          {CATS.find(c => c.value === ex.category)?.label || ex.category}
+                        </span>
+                        <span style={{ fontSize:11, padding:'2px 8px', borderRadius:5,
+                          background:'var(--bg)', color:'var(--muted)', border:'1px solid var(--border)' }}>
+                          {ex.sub_category}
+                        </span>
+                        {!ex.active && (
+                          <span style={{ fontSize:11, padding:'2px 8px', borderRadius:5,
+                            background:'#fee2e2', color:'var(--danger)' }}>неактивно</span>
+                        )}
+                      </div>
+                      <h3 style={{ fontSize:15, fontWeight:600, marginBottom:3 }}>{ex.title}</h3>
+                      <p style={{ fontSize:13, color:'var(--muted)' }}>
+                        {ex.sets} подх. {ex.reps ? `× ${ex.reps} повт.` : ''}{ex.duration_sec ? ` × ${ex.duration_sec}сек` : ''} ·
+                        отдых {ex.rest_sec}сек · {'★'.repeat(ex.difficulty)+'☆'.repeat(3-ex.difficulty)}
+                      </p>
+                      {ex.swim_benefit && (
+                        <p style={{ fontSize:12, color, marginTop:3 }}>🏊 {ex.swim_benefit}</p>
+                      )}
+                      {ex.muscles_primary?.length > 0 && (
+                        <p style={{ fontSize:12, color:'var(--muted)', marginTop:2 }}>
+                          💪 {ex.muscles_primary.join(', ')}
+                        </p>
                       )}
                     </div>
-                    <h3 style={{ fontSize:15, fontWeight:600, marginBottom:3 }}>{ex.title}</h3>
-                    <p style={{ fontSize:13, color:'var(--muted)' }}>
-                      {ex.sets} подх. {ex.reps ? `× ${ex.reps} повт.` : ''}{ex.duration_sec ? ` × ${ex.duration_sec}сек` : ''} ·
-                      отдых {ex.rest_sec}сек · {'★'.repeat(ex.difficulty)+'☆'.repeat(3-ex.difficulty)}
-                    </p>
-                    {ex.swim_benefit && (
-                      <p style={{ fontSize:12, color, marginTop:3 }}>🏊 {ex.swim_benefit}</p>
-                    )}
-                    {ex.muscles_primary?.length > 0 && (
-                      <p style={{ fontSize:12, color:'var(--muted)', marginTop:2 }}>
-                        💪 {ex.muscles_primary.join(', ')}
-                      </p>
-                    )}
-                  </div>
 
-                  <div style={{ textAlign:'right', flexShrink:0 }}>
-                    <div style={{ fontSize:16, fontWeight:700, color:'#f59e0b', marginBottom:10 }}>
-                      ${ex.reward_usd.toFixed(2)}
-                    </div>
-                    <div style={{ display:'flex', gap:6, flexWrap:'wrap', justifyContent:'flex-end' }}>
-                      <button onClick={() => sendToTelegram(ex.id)} disabled={st === 'loading'}
-                        style={{ padding:'5px 12px', border:'1px solid',
-                          borderColor: st==='ok' ? '#6ee7b7' : st==='err' ? '#fca5a5' : '#bfdbfe',
-                          borderRadius:6, fontSize:12, cursor: st==='loading' ? 'wait' : 'pointer',
-                          background: st==='ok' ? '#d1fae5' : st==='err' ? '#fee2e2' : '#eff6ff',
-                          color: st==='ok' ? '#065f46' : st==='err' ? '#991b1b' : '#1d4ed8' }}>
-                        {st==='loading' ? '⏳ Отправка...' : st==='ok' ? '✅ Отправлено' : st==='err' ? '❌ Ошибка' : '📨 В Telegram'}
-                      </button>
-                      <button onClick={() => openEdit(ex)}
-                        style={{ padding:'5px 12px', border:'1px solid var(--border)', borderRadius:6, fontSize:12, background:'#fff' }}>
-                        Изменить
-                      </button>
-                      <button onClick={() => del(ex.id)}
-                        style={{ padding:'5px 12px', border:'1px solid #fee2e2', borderRadius:6, fontSize:12,
-                          background:'#fff', color:'var(--danger)' }}>
-                        Удалить
-                      </button>
-                    </div>
-                    {sendMsg[ex.id] && (
-                      <div style={{ fontSize:11, marginTop:5, textAlign:'right',
-                        color: st === 'err' ? '#991b1b' : '#065f46' }}>
-                        {sendMsg[ex.id]}
+                    <div style={{ textAlign:'right', flexShrink:0 }}>
+                      <div style={{ fontSize:16, fontWeight:700, color:'#f59e0b', marginBottom:10 }}>
+                        ${ex.reward_usd.toFixed(2)}
                       </div>
-                    )}
+                      <div style={{ display:'flex', gap:6, flexWrap:'wrap', justifyContent:'flex-end' }}>
+                        {/* Telegram send button */}
+                        <button onClick={() => sendToTelegram(ex.id)} disabled={st === 'loading'}
+                          style={{ padding:'5px 12px', border:'1px solid',
+                            borderColor: st==='ok' ? '#6ee7b7' : st==='err' ? '#fca5a5' : '#bfdbfe',
+                            borderRadius:6, fontSize:12, cursor: st==='loading' ? 'wait' : 'pointer',
+                            background: st==='ok' ? '#d1fae5' : st==='err' ? '#fee2e2' : '#eff6ff',
+                            color: st==='ok' ? '#065f46' : st==='err' ? '#991b1b' : '#1d4ed8' }}>
+                          {st==='loading' ? '⏳' : st==='ok' ? '✅' : st==='err' ? '❌' : '📨'}
+                          {' '}{st==='loading' ? 'Отправка...' : st==='ok' ? 'Отправлено' : st==='err' ? 'Ошибка' : 'В Telegram'}
+                        </button>
+                        {/* Upload image button */}
+                        <button onClick={() => fileRefs.current[ex.id]?.click()}
+                          disabled={uploading[ex.id]}
+                          style={{ padding:'5px 12px', border:'1px solid var(--border)',
+                            borderRadius:6, fontSize:12, background:'#fff', cursor:'pointer' }}>
+                          {uploading[ex.id] ? '⏳' : hasImg ? '🖼' : '📷'}
+                          {' '}{uploading[ex.id] ? 'Загрузка...' : hasImg ? 'Фото' : 'Добавить фото'}
+                        </button>
+                        <input type="file" accept="image/*" style={{ display:'none' }}
+                          ref={el => fileRefs.current[ex.id] = el}
+                          onChange={e => e.target.files[0] && handleImageUpload(ex.id, e.target.files[0])} />
+                        {/* Edit / Delete */}
+                        <button onClick={() => openEdit(ex)}
+                          style={{ padding:'5px 12px', border:'1px solid var(--border)', borderRadius:6, fontSize:12, background:'#fff' }}>
+                          Изменить
+                        </button>
+                        <button onClick={() => del(ex.id)}
+                          style={{ padding:'5px 12px', border:'1px solid #fee2e2', borderRadius:6, fontSize:12,
+                            background:'#fff', color:'var(--danger)' }}>
+                          Удалить
+                        </button>
+                      </div>
+                      {sendMsg[ex.id] && (
+                        <div style={{ fontSize:11, marginTop:5, textAlign:'right',
+                          color: st === 'err' ? '#991b1b' : '#065f46' }}>
+                          {sendMsg[ex.id]}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -196,6 +244,7 @@ export default function Exercises() {
         </div>
       )}
 
+      {/* Edit/Create modal */}
       {modal && (
         <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.4)',
           display:'flex', alignItems:'center', justifyContent:'center', zIndex:100, padding:'1rem' }}>
