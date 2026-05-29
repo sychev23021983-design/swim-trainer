@@ -8,6 +8,7 @@ import Schedule from './pages/Schedule.jsx'
 import Progress from './pages/Progress.jsx'
 import SwimResults from './pages/SwimResults.jsx'
 import Rewards from './pages/Rewards.jsx'
+import Settings from './pages/Settings.jsx'
 
 const NAV = [
   { to: '/',           icon: '🏠', label: 'Главная'    },
@@ -16,6 +17,7 @@ const NAV = [
   { to: '/progress',   icon: '📊', label: 'Прогресс'   },
   { to: '/swim',       icon: '🏊', label: 'Заплывы'    },
   { to: '/rewards',    icon: '💰', label: 'Награды'    },
+  { to: '/settings',   icon: '⚙️', label: 'Настройки'  },
 ]
 
 export default function App() {
@@ -33,7 +35,7 @@ export default function App() {
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
         <header style={{ background: '#fff', borderBottom: '1px solid var(--border)',
           padding: '0 1.5rem', display: 'flex', alignItems: 'center',
-          justifyContent: 'space-between', height: 56 }}>
+          justifyContent: 'space-between', height: 56, flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <span style={{ fontSize: 22 }}>🏊</span>
             <span style={{ fontWeight: 600, fontSize: 16 }}>Swim Trainer</span>
@@ -49,14 +51,15 @@ export default function App() {
           </div>
         </header>
 
-        <div style={{ display: 'flex', flex: 1 }}>
+        <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
           <nav style={{ width: 200, background: '#fff', borderRight: '1px solid var(--border)',
-            padding: '1rem 0', flexShrink: 0 }}>
+            padding: '1rem 0', flexShrink: 0, overflowY: 'auto' }}>
             {NAV.map(n => (
               <NavLink key={n.to} to={n.to} end={n.to === '/'}
                 style={({ isActive }) => ({
                   display: 'flex', alignItems: 'center', gap: 10,
-                  padding: '10px 20px', fontSize: 14, color: isActive ? 'var(--primary)' : 'var(--text)',
+                  padding: '10px 20px', fontSize: 14,
+                  color: isActive ? 'var(--primary)' : 'var(--text)',
                   background: isActive ? 'var(--primary-light)' : 'transparent',
                   borderRight: isActive ? '3px solid var(--primary)' : '3px solid transparent',
                   textDecoration: 'none', transition: 'all .15s'
@@ -74,6 +77,7 @@ export default function App() {
               <Route path="/progress"  element={<Progress />} />
               <Route path="/swim"      element={<SwimResults />} />
               <Route path="/rewards"   element={<Rewards />} />
+              <Route path="/settings"  element={<Settings />} />
               <Route path="*"          element={<Navigate to="/" />} />
             </Routes>
           </main>
