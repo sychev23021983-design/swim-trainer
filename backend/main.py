@@ -583,3 +583,66 @@ async def test_telegram(user=Depends(verify_token)):
         raise HTTPException(400, detail="Telegram не отвечает (timeout). Проверь токен.")
     except httpx.RequestError as e:
         raise HTTPException(400, detail=f"Сетевая ошибка: {str(e)}")
+
+# ---------- Send single exercise to Telegram ----------
+CAT_EMOJI = {
+    "butterfly": "🦋", "freestyle": "🏊", "backstroke": "🔄",
+    "breaststroke": "🐸", "universal": "🏋️"
+}
+CAT_LABELS = {
+    "butterfly": "Баттерфляй", "freestyle": "Кроль",
+    "backstroke": "На спине", "breaststroke": "Брасс", "universal": "Универсальное"
+}
+
+@app.post("/api/exercises/{ex_id}/send-telegram")
+async def send_exercise_telegram(ex_id: int, user=Depends(verify_token)):
+    if user["role"] != "parent": raise HTTPException(403)
+    db = get_db()
+    ex = db.execute("SELECT * FROM exercises WHERE id=?", (ex_id,)).fetchone()
+    db.close()
+    if not ex: raise HTTPException(404, "Упражнение не найдено")
+
+    s = _read_settings()
+    token   = s.get("telegram_bot_token", "").strip()
+    chat_id = s.get("telegram_chat_id", "").strip()
+    if not token or not chat_id:
+        raise HTTPException(400, detail="Telegram не настроен. Заполни Bot Token и Chat ID в Настройках.")
+
+    ex = dict(ex)
+    emoji   = CAT_EMOJI.get(ex["category"], "💪")
+    cat     = CAT_LABELS.get(ex["category"], ex["category"])
+    reps_str = f"{ex['sets']} × {ex['reps']} повт." if ex.get("reps") else \
+               f"{ex['sets']} подх. × {ex['duration_sec']} сек" if ex.get("duration_sec") else \
+               f"{ex['sets']} подходов"
+    diff_str = "★" * ex["difficulty"] + "☆" * (3 - ex["difficulty"])
+
+    text = (
+        f"{emoji} <b>Задание от папы!</b>\n\n"
+        f"<b>{ex['title']}</b>\n"
+        f"📂 {cat} · {diff_str}\n\n"
+        f"⏱ {reps_str} · отдых {ex['rest_sec']} сек\n"
+    )
+    if ex.get("swim_benefit"):
+        text += f"\n🏊 <i>{ex['swim_benefit']}</i>\n"
+    if ex.get("instructions"):
+        text += f"\n📋 {ex['instructions']}\n"
+    if ex.get("tips"):
+        text += f"\n💡 {ex['tips']}\n"
+    text += f"\n💰 Награда за выполнение: <b>${ex['reward_usd']:.2f}</b>"
+
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            r = await c.post(url, json={
+                "chat_id": chat_id,
+                "text": text,
+                "parse_mode": "HTML"
+            })
+        if r.status_code == 200:
+            return {"ok": True, "message": f"Упражнение «{ex['title']}» отправлено в Telegram!"}
+        err = r.json()
+        raise HTTPException(400, detail=f"Telegram: {err.get('description', r.text)}")
+    except httpx.TimeoutException:
+        raise HTTPException(400, detail="Telegram не отвечает (timeout)")
+    except httpx.RequestError as e:
+        raise HTTPException(400, detail=f"Сетевая ошибка: {str(e)}")
