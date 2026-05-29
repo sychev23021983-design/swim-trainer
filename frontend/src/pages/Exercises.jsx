@@ -65,6 +65,21 @@ export default function Exercises() {
     await api.deleteExercise(id); await load()
   }
 
+  const sendToTelegram = async (id) => {
+    setSending(p => ({...p, [id]: 'loading'}))
+    setSendMsg(p => ({...p, [id]: ''}))
+    try {
+      const res = await api.sendExercise(id)
+      setSending(p => ({...p, [id]: 'ok'}))
+      setSendMsg(p => ({...p, [id]: res.message || 'Отправлено!'}))
+      setTimeout(() => setSending(p => ({...p, [id]: null})), 3000)
+    } catch(e) {
+      setSending(p => ({...p, [id]: 'err'}))
+      setSendMsg(p => ({...p, [id]: e.message || 'Ошибка отправки'}))
+      setTimeout(() => setSending(p => ({...p, [id]: null})), 4000)
+    }
+  }
+
   const f = (k,v) => setForm(p => ({...p, [k]: v}))
   const inp = (k, type='text') => (
     <input type={type} value={form[k]??''} onChange={e=>f(k,e.target.value)}
@@ -136,7 +151,17 @@ export default function Exercises() {
                     <div style={{ fontSize:16,fontWeight:700,color:'#f59e0b',marginBottom:8 }}>
                       ${ex.reward_usd.toFixed(2)}
                     </div>
-                    <div style={{ display:'flex',gap:6 }}>
+                    <div style={{ display:'flex',gap:6,flexWrap:'wrap' }}>
+                      <button onClick={() => sendToTelegram(ex.id)}
+                        disabled={sending[ex.id] === 'loading'}
+                        title="Отправить упражнение сыну в Telegram"
+                        style={{ padding:'5px 12px',border:'1px solid #bfdbfe',borderRadius:6,fontSize:12,
+                          background: sending[ex.id]==='ok' ? '#d1fae5' : sending[ex.id]==='err' ? '#fee2e2' : '#eff6ff',
+                          color: sending[ex.id]==='ok' ? '#065f46' : sending[ex.id]==='err' ? 'var(--danger)' : '#1d4ed8',
+                          cursor: sending[ex.id]==='loading' ? 'wait' : 'pointer' }}>
+                        {sending[ex.id]==='loading' ? '⏳' : sending[ex.id]==='ok' ? '✅' : sending[ex.id]==='err' ? '❌' : '📨'}
+                        {sending[ex.id]==='loading' ? ' Отправка...' : sending[ex.id]==='ok' ? ' Отправлено' : sending[ex.id]==='err' ? ' Ошибка' : ' В Telegram'}
+                      </button>
                       <button onClick={() => openEdit(ex)}
                         style={{ padding:'5px 12px',border:'1px solid var(--border)',borderRadius:6,fontSize:12,background:'#fff' }}>
                         Изменить
@@ -147,6 +172,12 @@ export default function Exercises() {
                         Удалить
                       </button>
                     </div>
+                    {sendMsg[ex.id] && (
+                      <div style={{ fontSize:11,marginTop:4,
+                        color: sending[ex.id]==='err' ? 'var(--danger)' : '#065f46' }}>
+                        {sendMsg[ex.id]}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
