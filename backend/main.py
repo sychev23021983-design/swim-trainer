@@ -8,6 +8,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from typing import Optional, List
 import aiofiles
+import httpx
 
 DB_PATH    = os.getenv("DB_PATH", "./data/swim.db")
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret")
