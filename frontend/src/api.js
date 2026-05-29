@@ -51,6 +51,8 @@ export const api = {
   saveSettings:   s   => req('POST', '/settings', s),
   testTelegram:   ()  => req('POST', '/settings/test-telegram'),
 
+  sendExercise: id => req('POST', `/exercises/${id}/send-telegram`),
+
   upload: async (file) => {
     const fd = new FormData(); fd.append('file', file)
     const r = await fetch(BASE+'/upload', { method:'POST',
