@@ -47,6 +47,10 @@ export const api = {
   progress:       ()  => req('GET', '/stats/progress'),
   swimProgress:   ()  => req('GET', '/stats/swim-progress'),
 
+  getSettings:    ()  => req('GET', '/settings'),
+  saveSettings:   s   => req('POST', '/settings', s),
+  testTelegram:   ()  => req('POST', '/settings/test-telegram'),
+
   upload: async (file) => {
     const fd = new FormData(); fd.append('file', file)
     const r = await fetch(BASE+'/upload', { method:'POST',
