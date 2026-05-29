@@ -609,40 +609,97 @@ async def send_exercise_telegram(ex_id: int, user=Depends(verify_token)):
         raise HTTPException(400, detail="Telegram не настроен. Заполни Bot Token и Chat ID в Настройках.")
 
     ex = dict(ex)
-    emoji   = CAT_EMOJI.get(ex["category"], "💪")
-    cat     = CAT_LABELS.get(ex["category"], ex["category"])
-    reps_str = f"{ex['sets']} × {ex['reps']} повт." if ex.get("reps") else \
-               f"{ex['sets']} подх. × {ex['duration_sec']} сек" if ex.get("duration_sec") else \
-               f"{ex['sets']} подходов"
+    emoji    = CAT_EMOJI.get(ex["category"], "💪")
+    cat_label= CAT_LABELS.get(ex["category"], ex["category"].upper())
+    reps_str = (f"{ex['sets']} × {ex['reps']} повт." if ex.get("reps")
+                else f"{ex['sets']} подх. × {ex['duration_sec']} сек" if ex.get("duration_sec")
+                else f"{ex['sets']} подходов")
     diff_str = "★" * ex["difficulty"] + "☆" * (3 - ex["difficulty"])
 
     text = (
-        f"{emoji} <b>Задание от папы!</b>\n\n"
+        f"{emoji} <b>{cat_label} — Задание от папы!</b>\n\n"
         f"<b>{ex['title']}</b>\n"
-        f"📂 {cat} · {diff_str}\n\n"
-        f"⏱ {reps_str} · отдых {ex['rest_sec']} сек\n"
+        f"{diff_str}  |  {reps_str}  |  отдых {ex['rest_sec']} сек"
     )
-    if ex.get("swim_benefit"):
-        text += f"\n🏊 <i>{ex['swim_benefit']}</i>\n"
     if ex.get("instructions"):
-        text += f"\n📋 {ex['instructions']}\n"
+        text += f"\n\n📋 {ex['instructions']}"
     if ex.get("tips"):
-        text += f"\n💡 {ex['tips']}\n"
-    text += f"\n💰 Награда за выполнение: <b>${ex['reward_usd']:.2f}</b>"
+        text += f"\n💡 <i>{ex['tips']}</i>"
+    if ex.get("swim_benefit"):
+        text += f"\n\n🏊 {ex['swim_benefit']}"
+    text += f"\n\n💰 <b>Награда: ${ex['reward_usd']:.2f}</b>"
 
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    # Inline keyboard
+    input_type = ex.get("input_type", "done")
+    reps_target = ex.get("reps") or 0
+    if input_type == "done":
+        kb_buttons = [[{"text": "✅ Выполнил!", "callback_data": f"done:{ex_id}"}]]
+    else:
+        kb_buttons = [[
+            {"text": "✅ Выполнил всё!", "callback_data": f"done:{ex_id}"},
+            {"text": "🔢 Ввести кол-во", "callback_data": f"input:{ex_id}:{reps_target}"}
+        ]]
+    kb_buttons.append([{"text": "📋 Все задания дня", "callback_data": "show_all"}])
+    reply_markup = {"inline_keyboard": kb_buttons}
+
+    tg_base = f"https://api.telegram.org/bot{token}"
     try:
-        async with httpx.AsyncClient(timeout=10.0) as c:
-            r = await c.post(url, json={
-                "chat_id": chat_id,
-                "text": text,
-                "parse_mode": "HTML"
-            })
-        if r.status_code == 200:
-            return {"ok": True, "message": f"Упражнение «{ex['title']}» отправлено в Telegram!"}
-        err = r.json()
-        raise HTTPException(400, detail=f"Telegram: {err.get('description', r.text)}")
+        async with httpx.AsyncClient(timeout=15.0) as c:
+            # Try to send with photo if image_demo exists
+            image_path = ex.get("image_demo") or ex.get("image_muscle")
+            sent = False
+            if image_path:
+                full_path = os.path.join(UPLOAD_DIR, os.path.basename(image_path))
+                if os.path.exists(full_path):
+                    caption = text[:1024]  # Telegram caption limit
+                    with open(full_path, "rb") as img_file:
+                        files = {"photo": img_file}
+                        data  = {"chat_id": chat_id, "caption": caption,
+                                 "parse_mode": "HTML",
+                                 "reply_markup": json.dumps(reply_markup)}
+                        r = await c.post(f"{tg_base}/sendPhoto", data=data, files=files)
+                    if r.status_code == 200:
+                        sent = True
+
+            if not sent:
+                r = await c.post(f"{tg_base}/sendMessage", json={
+                    "chat_id": chat_id, "text": text,
+                    "parse_mode": "HTML", "reply_markup": reply_markup
+                })
+                if r.status_code != 200:
+                    err = r.json()
+                    raise HTTPException(400, detail=f"Telegram: {err.get('description', r.text)}")
+
+        return {"ok": True, "message": f"«{ex['title']}» отправлено в Telegram!"}
     except httpx.TimeoutException:
         raise HTTPException(400, detail="Telegram не отвечает (timeout)")
     except httpx.RequestError as e:
         raise HTTPException(400, detail=f"Сетевая ошибка: {str(e)}")
+
+@app.post("/api/exercises/{ex_id}/upload-image")
+async def upload_exercise_image(
+    ex_id: int,
+    image_type: str = "demo",   # "demo" or "muscle"
+    file: UploadFile = File(...),
+    user=Depends(verify_token)
+):
+    if user["role"] != "parent": raise HTTPException(403)
+    db = get_db()
+    ex = db.execute("SELECT id FROM exercises WHERE id=?", (ex_id,)).fetchone()
+    if not ex: raise HTTPException(404, "Упражнение не найдено")
+
+    ext = (file.filename or "img").split(".")[-1].lower()
+    if ext not in ["jpg","jpeg","png","gif","svg","webp"]:
+        raise HTTPException(400, "Поддерживаются: jpg, png, gif, webp, svg")
+
+    fname = f"ex_{ex_id}_{image_type}.{ext}"
+    fpath = os.path.join(UPLOAD_DIR, fname)
+    async with aiofiles.open(fpath, "wb") as f:
+        await f.write(await file.read())
+
+    url_path = f"/uploads/{fname}"
+    field    = "image_demo" if image_type == "demo" else "image_muscle"
+    db.execute(f"UPDATE exercises SET {field}=? WHERE id=?", (url_path, ex_id))
+    db.commit()
+    db.close()
+    return {"ok": True, "url": url_path}
