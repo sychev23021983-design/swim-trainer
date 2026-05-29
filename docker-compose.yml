@@ -1,0 +1,48 @@
+services:
+  backend:
+    build: ./backend
+    container_name: swim-trainer-backend
+    restart: always
+    ports:
+      - "127.0.0.1:8021:8000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - DB_PATH=/app/data/swim.db
+      - SECRET_KEY=${SECRET_KEY:-swim-secret-change-me}
+      - PARENT_PASSWORD=${PARENT_PASSWORD:-parent123}
+      - CHILD_NAME=${CHILD_NAME:-Сын}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - UPLOAD_DIR=/app/data/uploads
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  frontend:
+    build: ./frontend
+    container_name: swim-trainer-frontend
+    restart: always
+    ports:
+      - "0.0.0.0:8020:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  bot:
+    build: ./bot
+    container_name: swim-trainer-bot
+    restart: always
+    volumes:
+      - ./data:/app/data
+    environment:
+      - DB_PATH=/app/data/swim.db
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - BACKEND_URL=http://backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy
