@@ -313,7 +313,17 @@ def get_today_tasks():
     tasks = []
     for s in schedules:
         d = dict(s)
-        days = json.loads(d["days"])
+        raw_days = d["days"]
+        if isinstance(raw_days, str):
+            try:
+                days = json.loads(raw_days)
+                # Handle double-encoded: '["mon","wed"]' stored as string
+                if isinstance(days, str):
+                    days = json.loads(days)
+            except Exception:
+                days = [raw_days]
+        else:
+            days = raw_days
         if today_code not in days: continue
         done_today = db.execute(
             "SELECT id FROM completions WHERE exercise_id=? AND date(completed_at)=?",
