@@ -1,4 +1,4 @@
-import os, asyncio, logging
+import os, logging
 import httpx
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (Application, CommandHandler, CallbackQueryHandler,
@@ -18,9 +18,9 @@ CAT_LABELS = {"butterfly":"БАТТЕРФЛЯЙ","freestyle":"КРОЛЬ","backs
               "breaststroke":"БРАСС","universal":"ОБЩЕЕ"}
 DIFF_STARS = {1:"★☆☆", 2:"★★☆", 3:"★★★"}
 
-pending_input: dict = {}  # chat_id -> {ex_id, target}
+pending_input: dict = {}
 
-# ── API helpers ────────────────────────────────────────────────────────────────
+# ── API ───────────────────────────────────────────────────────────────────────
 async def api_get(path: str, params: dict = None):
     async with httpx.AsyncClient(timeout=10) as c:
         r = await c.get(f"{BACKEND_URL}{path}", params=params)
@@ -34,29 +34,29 @@ async def api_post(path: str, data: dict = None):
         return r.json()
 
 async def bot_complete(exercise_id: int, value_done=None, value_target=None, input_type="done"):
-    """Record completion via bot-specific endpoint (no JWT needed)."""
-    return await api_post("/api/bot/complete", {
+    log.info(f"bot_complete: ex_id={exercise_id} type={input_type} value={value_done}")
+    result = await api_post("/api/bot/complete", {
         "exercise_id":  exercise_id,
         "value_done":   value_done,
         "value_target": value_target,
         "input_type":   input_type,
         "bot_secret":   BOT_SECRET,
     })
+    log.info(f"bot_complete result: {result}")
+    return result
 
 async def bot_today():
     return await api_get("/api/bot/today", {"bot_secret": BOT_SECRET})
 
-# ── Format message ────────────────────────────────────────────────────────────
+# ── Format ────────────────────────────────────────────────────────────────────
 def format_exercise_msg(ex: dict, idx: int = 1, total: int = 1) -> str:
-    cat   = ex.get("category", "universal")
-    emoji = CAT_EMOJI.get(cat, "💪")
-    label = CAT_LABELS.get(cat, cat.upper())
-    diff  = DIFF_STARS.get(int(ex.get("difficulty", 1)), "★☆☆")
-    reps_str = (f"{ex['sets']} × {ex['reps']} повт."
-                if ex.get("reps") else
-                f"{ex['sets']} подх. × {ex['duration_sec']} сек"
-                if ex.get("duration_sec") else
-                f"{ex['sets']} подходов")
+    cat      = ex.get("category", "universal")
+    emoji    = CAT_EMOJI.get(cat, "💪")
+    label    = CAT_LABELS.get(cat, cat.upper())
+    diff     = DIFF_STARS.get(int(ex.get("difficulty", 1)), "★☆☆")
+    reps_str = (f"{ex['sets']} × {ex['reps']} повт." if ex.get("reps")
+                else f"{ex['sets']} подх. × {ex['duration_sec']} сек" if ex.get("duration_sec")
+                else f"{ex['sets']} подходов")
     lines = [
         f"{emoji} <b>{label} — Задание от папы!</b>", "",
         f"<b>{ex['title']}</b>",
@@ -84,7 +84,7 @@ def exercise_keyboard(ex_id: int, input_type: str, target: int = 0) -> InlineKey
     rows.append([InlineKeyboardButton("📋 Все задания", callback_data="show_all")])
     return InlineKeyboardMarkup(rows)
 
-# ── Today summary ──────────────────────────────────────────────────────────────
+# ── Today summary ─────────────────────────────────────────────────────────────
 async def build_today_summary():
     from datetime import datetime
     tasks   = await bot_today()
@@ -126,7 +126,7 @@ async def build_today_summary():
         )])
     return "\n".join(lines), InlineKeyboardMarkup(buttons)
 
-# ── Send exercise (with photo if available) ───────────────────────────────────
+# ── Send exercise ─────────────────────────────────────────────────────────────
 async def send_exercise_msg(bot, chat_id: str, ex: dict, idx=1, total=1):
     ex_id      = ex.get("exercise_id") or ex.get("id")
     input_type = ex.get("input_type", "done")
@@ -134,12 +134,10 @@ async def send_exercise_msg(bot, chat_id: str, ex: dict, idx=1, total=1):
     text       = format_exercise_msg(ex, idx, total)
     kb         = exercise_keyboard(ex_id, input_type, target)
     image_url  = ex.get("image_demo") or ex.get("image_muscle")
-
     if image_url and image_url.startswith("/uploads/"):
-        photo_url = f"{BACKEND_URL}{image_url}"
         try:
             async with httpx.AsyncClient(timeout=10) as c:
-                resp = await c.get(photo_url)
+                resp = await c.get(f"{BACKEND_URL}{image_url}")
             if resp.status_code == 200:
                 await bot.send_photo(chat_id=chat_id, photo=resp.content,
                                      caption=text[:1024], parse_mode="HTML", reply_markup=kb)
@@ -153,15 +151,17 @@ async def send_daily(app: Application):
     if not CHAT_ID: return
     try:
         tasks = await bot_today()
-        if not [t for t in tasks if not t.get("completed_today")]: return
+        if not any(not t.get("completed_today") for t in tasks): return
         msg, kb = await build_today_summary()
-        await app.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="HTML", reply_markup=kb)
+        await app.bot.send_message(chat_id=CHAT_ID, text=msg,
+                                   parse_mode="HTML", reply_markup=kb)
     except Exception as e:
         log.error(f"send_daily error: {e}")
 
-async def reload_schedules(scheduler: AsyncIOScheduler, app: Application):
-    for job in scheduler.get_jobs():
-        if job.id.startswith("notify_"): job.remove()
+async def post_init(app: Application):
+    """Called after bot starts — set up scheduler."""
+    scheduler = AsyncIOScheduler()
+    scheduler.start()
     try:
         schedules = await api_get("/api/schedules")
         seen = set()
@@ -174,7 +174,8 @@ async def reload_schedules(scheduler: AsyncIOScheduler, app: Application):
                               id=f"notify_{t.replace(':','')}", args=[app])
             log.info(f"Scheduled at {t}")
     except Exception as e:
-        log.error(f"reload_schedules: {e}")
+        log.error(f"post_init schedules: {e}")
+    app.bot_data["scheduler"] = scheduler
 
 # ── Handlers ──────────────────────────────────────────────────────────────────
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -200,6 +201,7 @@ async def on_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q    = update.callback_query
     await q.answer()
     data = q.data
+    log.info(f"Callback: {data} from chat {q.message.chat_id}")
 
     if data == "show_all":
         msg, kb = await build_today_summary()
@@ -217,8 +219,7 @@ async def on_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 ex["exercise_id"] = ex_id
             await send_exercise_msg(ctx.bot, q.message.chat_id, ex)
         except Exception as e:
-            await ctx.bot.send_message(chat_id=q.message.chat_id,
-                                       text=f"❌ Ошибка: {e}")
+            await ctx.bot.send_message(chat_id=q.message.chat_id, text=f"❌ Ошибка: {e}")
         return
 
     if data.startswith("done:"):
@@ -226,17 +227,23 @@ async def on_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         try:
             result = await bot_complete(ex_id, input_type="done")
             reward = float(result.get("reward_earned", 0))
-            reply_text = (f"✅ <b>Выполнено!</b>\n"
-                         f"Начислено: <b>+${reward:.2f}</b> 💰\n\nТак держать! 💪")
-            if q.message.caption is not None:
-                await q.edit_message_caption(caption=reply_text, parse_mode="HTML")
-            else:
-                await q.edit_message_text(text=reply_text, parse_mode="HTML")
+            reply  = (f"✅ <b>Выполнено!</b>\n"
+                      f"Начислено: <b>+${reward:.2f}</b> 💰\n\nТак держать! 💪")
+            try:
+                if q.message.caption is not None:
+                    await q.edit_message_caption(caption=reply, parse_mode="HTML")
+                else:
+                    await q.edit_message_text(text=reply, parse_mode="HTML")
+            except Exception:
+                await ctx.bot.send_message(chat_id=q.message.chat_id,
+                                           text=reply, parse_mode="HTML")
+            import asyncio
             await asyncio.sleep(1)
             msg, kb = await build_today_summary()
             await ctx.bot.send_message(chat_id=q.message.chat_id,
                                        text=msg, parse_mode="HTML", reply_markup=kb)
         except Exception as e:
+            log.error(f"done callback error: {e}")
             await ctx.bot.send_message(chat_id=q.message.chat_id, text=f"❌ Ошибка: {e}")
         return
 
@@ -259,8 +266,7 @@ async def on_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
     if chat_id not in pending_input:
-        await update.message.reply_text(
-            "Отправь /today чтобы увидеть задания 📋", parse_mode="HTML")
+        await update.message.reply_text("Отправь /today чтобы увидеть задания 📋")
         return
     text = update.message.text.strip()
     if not text.isdigit():
@@ -284,23 +290,24 @@ async def on_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Ошибка записи: {e}")
 
 # ── Main ──────────────────────────────────────────────────────────────────────
-async def main():
+def main():
     if not BOT_TOKEN:
         log.error("TELEGRAM_BOT_TOKEN not set.")
-        await asyncio.sleep(3600); return
+        import time; time.sleep(3600); return
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = (Application.builder()
+           .token(BOT_TOKEN)
+           .post_init(post_init)
+           .build())
+
     app.add_handler(CommandHandler("start",   cmd_start))
     app.add_handler(CommandHandler("today",   cmd_today))
     app.add_handler(CommandHandler("balance", cmd_balance))
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
 
-    scheduler = AsyncIOScheduler()
-    scheduler.start()
-    await reload_schedules(scheduler, app)
     log.info("Swim Trainer Bot started 🏊")
-    await app.run_polling(allowed_updates=Update.ALL_TYPES)
+    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
