@@ -145,10 +145,9 @@ export default function Exercises() {
 
                 {/* Image preview if exists */}
                 {hasImg && (
-                  <div style={{ position:'relative', maxHeight:180, overflow:'hidden',
-                    background:'#0d1117', display:'flex', alignItems:'center', justifyContent:'center' }}>
+                  <div style={{ position:'relative', background:'#0d1117', textAlign:'center' }}>
                     <img src={ex.image_demo || ex.image_muscle} alt={ex.title}
-                      style={{ width:'100%', maxHeight:180, objectFit:'cover', display:'block' }}
+                      style={{ width:'100%', height:'auto', display:'block', objectFit:'contain' }}
                       onError={e => e.target.style.display='none'} />
                     <button
                       onClick={() => fileRefs.current[ex.id]?.click()}
