@@ -15,6 +15,7 @@ services:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
       - UPLOAD_DIR=/app/data/uploads
+      - BOT_SECRET=${BOT_SECRET:-swim-bot-internal-2026}
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
       interval: 10s
@@ -43,6 +44,7 @@ services:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
       - BACKEND_URL=http://backend:8000
+      - BOT_SECRET=${BOT_SECRET:-swim-bot-internal-2026}
     depends_on:
       backend:
         condition: service_healthy
