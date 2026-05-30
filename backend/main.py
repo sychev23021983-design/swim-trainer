@@ -344,6 +344,42 @@ def add_completion(c: CompletionCreate):
     db.close()
     return {"ok": True, "reward_earned": reward}
 
+# Internal endpoint for bot (no JWT, uses BOT_SECRET)
+BOT_SECRET = os.getenv("BOT_SECRET", "swim-bot-internal-2026")
+
+class BotCompletionCreate(BaseModel):
+    exercise_id: int
+    value_done: Optional[int] = None
+    value_target: Optional[int] = None
+    input_type: str = "done"
+    bot_secret: str = ""
+
+@app.post("/api/bot/complete")
+def bot_complete(c: BotCompletionCreate):
+    """Called by Telegram bot — no JWT needed, uses shared secret."""
+    if c.bot_secret != BOT_SECRET:
+        raise HTTPException(403, "Invalid bot secret")
+    db = get_db()
+    ex = db.execute("SELECT reward_usd FROM exercises WHERE id=?", (c.exercise_id,)).fetchone()
+    if not ex: raise HTTPException(404)
+    reward = ex["reward_usd"]
+    db.execute("""
+        INSERT INTO completions (exercise_id,value_done,value_target,input_type,reward_earned)
+        VALUES (?,?,?,?,?)
+    """, (c.exercise_id, c.value_done, c.value_target, c.input_type, reward))
+    db.execute("INSERT INTO rewards (amount_usd,reason) VALUES (?,?)",
+               (reward, f"Выполнено упражнение #{c.exercise_id} (Telegram)"))
+    db.commit()
+    db.close()
+    return {"ok": True, "reward_earned": reward}
+
+@app.get("/api/bot/today")
+def bot_today(bot_secret: str = ""):
+    """Today tasks for bot — no JWT."""
+    if bot_secret != BOT_SECRET:
+        raise HTTPException(403, "Invalid bot secret")
+    return get_today_tasks()
+
 @app.get("/api/completions")
 def list_completions(days: int = 30, user=Depends(verify_token)):
     db = get_db()
